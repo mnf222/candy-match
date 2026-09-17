@@ -6,48 +6,125 @@ export const getRandomColor = (colorsCount: number) => {
   return CANDY_COLORS[Math.floor(Math.random() * maxColors)];
 };
 
-export const checkForMatches = (board: (Candy | null)[]): Set<number> => {
-  const matches = new Set<number>();
+export const getMatchGroups = (board: (Candy | null)[]) => {
+  const horizontalGroups: number[][] = [];
+  const verticalGroups: number[][] = [];
   
-  // Check horizontal matches
   for (let r = 0; r < GRID_SIZE; r++) {
-    for (let c = 0; c < GRID_SIZE - 2; c++) {
+    let matchLen = 1;
+    for (let c = 0; c < GRID_SIZE; c++) {
       const i = r * GRID_SIZE + c;
       const color = board[i]?.color;
-      if (!color) continue;
-      
-      if (board[i + 1]?.color === color && board[i + 2]?.color === color) {
-        matches.add(i);
-        matches.add(i + 1);
-        matches.add(i + 2);
-        let next = 3;
-        while (c + next < GRID_SIZE && board[i + next]?.color === color) {
-          matches.add(i + next);
-          next++;
+      const nextColor = (c < GRID_SIZE - 1) ? board[i + 1]?.color : null;
+      if (color && color === nextColor) {
+        matchLen++;
+      } else {
+        if (matchLen >= 3) {
+          const group = [];
+          for(let k = 0; k < matchLen; k++) group.push(i - k);
+          horizontalGroups.push(group.reverse());
+        }
+        matchLen = 1;
+      }
+    }
+  }
+  
+  for (let c = 0; c < GRID_SIZE; c++) {
+    let matchLen = 1;
+    for (let r = 0; r < GRID_SIZE; r++) {
+      const i = r * GRID_SIZE + c;
+      const color = board[i]?.color;
+      const nextColor = (r < GRID_SIZE - 1) ? board[i + GRID_SIZE]?.color : null;
+      if (color && color === nextColor) {
+        matchLen++;
+      } else {
+        if (matchLen >= 3) {
+          const group = [];
+          for(let k = 0; k < matchLen; k++) group.push(i - k * GRID_SIZE);
+          verticalGroups.push(group.reverse());
+        }
+        matchLen = 1;
+      }
+    }
+  }
+  return { horizontalGroups, verticalGroups };
+};
+
+export const resolveCrush = (board: (Candy | null)[], initialMatchIndices: Set<number>) => {
+  const toCrush = new Set(initialMatchIndices);
+  const queue = Array.from(toCrush);
+  
+  while (queue.length > 0) {
+    const idx = queue.shift()!;
+    const candy = board[idx];
+    if (!candy) continue;
+    
+    if (candy.special === 'row') {
+      const r = Math.floor(idx / GRID_SIZE);
+      for (let c = 0; c < GRID_SIZE; c++) {
+        const rowIdx = r * GRID_SIZE + c;
+        if (!toCrush.has(rowIdx) && board[rowIdx]) {
+          toCrush.add(rowIdx);
+          queue.push(rowIdx);
+        }
+      }
+    }
+    
+    if (candy.special === 'col') {
+      const c = idx % GRID_SIZE;
+      for (let r = 0; r < GRID_SIZE; r++) {
+        const colIdx = r * GRID_SIZE + c;
+        if (!toCrush.has(colIdx) && board[colIdx]) {
+          toCrush.add(colIdx);
+          queue.push(colIdx);
         }
       }
     }
   }
   
-  // Check vertical matches
-  for (let c = 0; c < GRID_SIZE; c++) {
-    for (let r = 0; r < GRID_SIZE - 2; r++) {
-      const i = r * GRID_SIZE + c;
-      const color = board[i]?.color;
-      if (!color) continue;
-      
-      if (board[i + GRID_SIZE]?.color === color && board[i + GRID_SIZE * 2]?.color === color) {
-        matches.add(i);
-        matches.add(i + GRID_SIZE);
-        matches.add(i + GRID_SIZE * 2);
-        let next = 3;
-        while (r + next < GRID_SIZE && board[i + next * GRID_SIZE]?.color === color) {
-          matches.add(i + next * GRID_SIZE);
-          next++;
+  return toCrush;
+};
+
+export const evaluateBoard = (board: (Candy | null)[], swapIndices?: number[]) => {
+  const { horizontalGroups, verticalGroups } = getMatchGroups(board);
+  
+  const initialMatches = new Set<number>();
+  const specialsToCreate: { index: number, color: string, special: 'row' | 'col' }[] = [];
+  
+  const allGroups = [
+    ...horizontalGroups.map(g => ({ group: g, type: 'col' as const })), // horizontal match creates column cleaner
+    ...verticalGroups.map(g => ({ group: g, type: 'row' as const }))    // vertical match creates row cleaner
+  ];
+  
+  allGroups.forEach(({ group, type }) => {
+    group.forEach(idx => initialMatches.add(idx));
+    
+    if (group.length >= 4) {
+      let spawnIdx = group[1]; // default somewhere in middle
+      if (swapIndices) {
+        const intersect = group.find(idx => swapIndices.includes(idx));
+        if (intersect !== undefined) {
+          spawnIdx = intersect;
         }
       }
+      specialsToCreate.push({
+        index: spawnIdx,
+        color: board[group[0]]!.color,
+        special: type
+      });
     }
-  }
+  });
+  
+  const crushSet = resolveCrush(board, initialMatches);
+  
+  return { crushSet, specialsToCreate };
+};
+
+export const checkForMatches = (board: (Candy | null)[]): Set<number> => {
+  const { horizontalGroups, verticalGroups } = getMatchGroups(board);
+  const matches = new Set<number>();
+  horizontalGroups.forEach(g => g.forEach(i => matches.add(i)));
+  verticalGroups.forEach(g => g.forEach(i => matches.add(i)));
   return matches;
 };
 
