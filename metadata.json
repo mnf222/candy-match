@@ -1,0 +1,6 @@
+{
+  "name": "Candy Match",
+  "description": "A fully functional Match-3 puzzle game built in React.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,259 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Trophy, Frown, Sparkles, RefreshCcw } from 'lucide-react';
+import { Candy } from './types';
+import { LEVELS, GRID_SIZE } from './constants';
+import { generateBoard, checkForMatches, applyGravity } from './utils/gameLogic';
+import { Header } from './components/Header';
+import { Modal } from './components/Modal';
+
+const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+
+export default function App() {
+  const [board, setBoard] = useState<(Candy | null)[]>([]);
+  const [levelIndex, setLevelIndex] = useState(0);
+  const [score, setScore] = useState(0);
+  const [moves, setMoves] = useState(0);
+  
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  
+  const [showLevelClear, setShowLevelClear] = useState(false);
+  const [showGameOver, setShowGameOver] = useState(false);
+  const [gameBeaten, setGameBeaten] = useState(false);
+
+  // Initialize Level
+  const initLevel = (idx: number) => {
+    if (idx >= LEVELS.length) {
+      setGameBeaten(true);
+      return;
+    }
+    const level = LEVELS[idx];
+    setBoard(generateBoard(level.colors));
+    setScore(0);
+    setMoves(level.moves);
+    setLevelIndex(idx);
+    setShowLevelClear(false);
+    setShowGameOver(false);
+    setIsProcessing(false);
+    setSelectedIdx(null);
+  };
+
+  useEffect(() => {
+    initLevel(0);
+  }, []);
+
+  // Check Win/Loss conditions when processing finishes
+  useEffect(() => {
+    if (!isProcessing && board.length > 0) {
+      const target = LEVELS[levelIndex].target;
+      if (score >= target) {
+        setShowLevelClear(true);
+      } else if (moves <= 0) {
+        setShowGameOver(true);
+      }
+    }
+  }, [isProcessing, score, moves, levelIndex, board.length]);
+
+  const attemptSwap = async (idx1: number, idx2: number) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+    setSelectedIdx(null);
+
+    // Optimistic Swap
+    const newBoard = [...board];
+    [newBoard[idx1], newBoard[idx2]] = [newBoard[idx2], newBoard[idx1]];
+    setBoard([...newBoard]);
+    
+    // Wait for the swap animation
+    await delay(300);
+
+    const matches = checkForMatches(newBoard);
+    
+    if (matches.size === 0) {
+      // Revert Swap if invalid
+      const revertBoard = [...newBoard];
+      [revertBoard[idx1], revertBoard[idx2]] = [revertBoard[idx2], revertBoard[idx1]];
+      setBoard(revertBoard);
+      await delay(300);
+      setIsProcessing(false);
+    } else {
+      // Valid move
+      setMoves(m => Math.max(0, m - 1));
+      await processCascades(newBoard, 1);
+    }
+  };
+
+  const processCascades = async (currentBoard: (Candy | null)[], combo: number) => {
+    const matches = checkForMatches(currentBoard);
+    
+    if (matches.size === 0) {
+      setIsProcessing(false);
+      return;
+    }
+
+    // Add Score
+    const points = Array.from(matches).length * 10 * combo;
+    setScore(s => s + points);
+
+    // Crush Matches
+    const crushedBoard = [...currentBoard];
+    matches.forEach(idx => crushedBoard[idx] = null);
+    setBoard([...crushedBoard]);
+    
+    // Wait for crush animation
+    await delay(250);
+
+    // Apply Gravity & Fill New
+    const nextBoard = applyGravity(crushedBoard, LEVELS[levelIndex].colors);
+    setBoard(nextBoard);
+
+    // Wait for fall animation
+    await delay(350);
+
+    // Recurse for chain reactions
+    await processCascades(nextBoard, combo + 1);
+  };
+
+  const handleInteraction = (index: number) => {
+    if (isProcessing || showGameOver || showLevelClear) return;
+    
+    if (selectedIdx === null) {
+      setSelectedIdx(index);
+    } else {
+      if (selectedIdx === index) {
+        setSelectedIdx(null); // Deselect
+        return;
+      }
+      
+      const r1 = Math.floor(selectedIdx / GRID_SIZE);
+      const c1 = selectedIdx % GRID_SIZE;
+      const r2 = Math.floor(index / GRID_SIZE);
+      const c2 = index % GRID_SIZE;
+      
+      const isAdjacent = (Math.abs(r1 - r2) === 1 && c1 === c2) || (Math.abs(c1 - c2) === 1 && r1 === r2);
+      
+      if (isAdjacent) {
+        attemptSwap(selectedIdx, index);
+      } else {
+        // Change selection if they clicked non-adjacent
+        setSelectedIdx(index);
+      }
+    }
+  };
+
+  // Drag and Drop support
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    if (isProcessing) {
+      e.preventDefault();
+      return;
+    }
+    setSelectedIdx(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDrop = (e: React.DragEvent, targetIdx: number) => {
+    e.preventDefault();
+    if (isProcessing || selectedIdx === null || selectedIdx === targetIdx) return;
+    
+    const r1 = Math.floor(selectedIdx / GRID_SIZE);
+    const c1 = selectedIdx % GRID_SIZE;
+    const r2 = Math.floor(targetIdx / GRID_SIZE);
+    const c2 = targetIdx % GRID_SIZE;
+    
+    const isAdjacent = (Math.abs(r1 - r2) === 1 && c1 === c2) || (Math.abs(c1 - c2) === 1 && r1 === r2);
+    
+    if (isAdjacent) {
+      attemptSwap(selectedIdx, targetIdx);
+    } else {
+      setSelectedIdx(null);
+    }
+  };
+
+  if (board.length === 0) return null;
+  const currentLevelData = LEVELS[levelIndex];
+
+  return (
+    <div className="min-h-screen w-full bg-gradient-to-br from-indigo-950 via-purple-900 to-pink-900 flex flex-col items-center justify-center p-4 font-sans select-none overflow-hidden touch-none">
+      
+      <Header
+        level={levelIndex}
+        target={currentLevelData?.target || 0}
+        score={score}
+        moves={moves}
+      />
+
+      {/* Game Board */}
+      <div className="w-full max-w-md aspect-square bg-white/10 backdrop-blur-md rounded-2xl p-2 shadow-2xl border border-white/20 relative">
+        <div className="grid grid-cols-8 grid-rows-8 gap-1 w-full h-full">
+          {board.map((candy, index) => (
+            <div
+              key={`slot-${index}`}
+              className="w-full h-full bg-black/15 rounded-lg relative overflow-visible"
+              onClick={() => handleInteraction(index)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => handleDrop(e, index)}
+            >
+              {candy && (
+                <motion.div
+                  layout
+                  initial={{ scale: 0, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0, opacity: 0 }}
+                  transition={{ type: "spring", stiffness: 350, damping: 25 }}
+                  draggable={!isProcessing}
+                  onDragStart={(e: any) => handleDragStart(e, index)}
+                  className={`absolute inset-0 flex items-center justify-center text-[7vw] sm:text-4xl cursor-pointer hover:bg-white/10 rounded-lg transition-colors z-10 
+                    ${isProcessing ? 'pointer-events-none' : ''} 
+                    ${selectedIdx === index ? 'ring-4 ring-white shadow-[0_0_15px_rgba(255,255,255,0.8)] z-20 scale-110' : ''}`}
+                >
+                  <span className="drop-shadow-lg leading-none">{candy.color}</span>
+                </motion.div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <p className="mt-8 text-white/50 text-sm font-medium">Swap adjacent candies to match 3 or more!</p>
+
+      {/* Modals */}
+      <Modal
+        isOpen={showLevelClear}
+        title="Level Clear!"
+        icon={<Sparkles className="text-yellow-300 w-16 h-16" />}
+        buttonText="Next Level"
+        onAction={() => initLevel(levelIndex + 1)}
+      >
+        <p>Target Reached: {currentLevelData?.target}</p>
+        <p className="font-bold text-white mt-1">Final Score: {score}</p>
+      </Modal>
+
+      <Modal
+        isOpen={showGameOver}
+        title="Out of Moves!"
+        icon={<Frown className="text-pink-300 w-16 h-16" />}
+        buttonText="Try Again"
+        onAction={() => initLevel(levelIndex)}
+      >
+        <p>You needed {currentLevelData?.target - score} more points.</p>
+      </Modal>
+
+      <Modal
+        isOpen={gameBeaten}
+        title="You Win!"
+        icon={<Trophy className="text-yellow-400 w-16 h-16" />}
+        buttonText="Play Again"
+        onAction={() => initLevel(0)}
+      >
+        <p>Congratulations! You beat all {LEVELS.length} levels!</p>
+      </Modal>
+      
+    </div>
+  );
+}
